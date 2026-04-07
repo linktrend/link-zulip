@@ -49,6 +49,6 @@
     "typescript": "^5.4.5",
     "unified": "^11.0.5",
     "unified-lint-rule": "^3.0.1",
-    "vite": "^6.3.5"
+    "vite": "^6.4.2"
   }
 }
