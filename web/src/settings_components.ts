@@ -485,7 +485,7 @@ export function read_field_data_from_form(
     const field_types = realm.custom_profile_field_types;
 
     // Only the following field types support associated field data.
-    if (field_type_id === field_types.SELECT.id) {
+    if (field_type_id === field_types.DROPDOWN.id) {
         return read_select_field_data_from_form($profile_field_form, old_field_data);
     } else if (field_type_id === field_types.EXTERNAL_ACCOUNT.id) {
         const parsed_old_field_data = old_field_data
@@ -2111,7 +2111,7 @@ export let resize_textareas_in_subsection = ($subsection: JQuery): void => {
     }
 
     $textareas.each(function () {
-        const $el = $<HTMLTextAreaElement>(this);
+        const $el = $(this);
 
         const min_rows = 2;
         const max_rows = 5;

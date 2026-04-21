@@ -86,7 +86,7 @@ from zerver.lib.test_helpers import (
     use_s3_backend,
 )
 from zerver.lib.thumbnail import DEFAULT_AVATAR_SIZE, MEDIUM_AVATAR_SIZE, resize_avatar
-from zerver.lib.types import Validator
+from zerver.lib.types import Invitee, Validator
 from zerver.lib.url_encoding import append_url_query_string
 from zerver.lib.user_groups import (
     get_system_user_group_by_name,
@@ -122,10 +122,12 @@ from zerver.signals import JUST_CREATED_THRESHOLD
 from zerver.views.auth import log_into_subdomain, maybe_send_to_registration
 from zproject.backends import (
     AUTH_BACKEND_NAME_MAP,
+    EMAIL_WITH_ENCODED_DISCORD_ID,
     AppleAuthBackend,
     AuthFuncT,
     AzureADAuthBackend,
     DevAuthBackend,
+    DiscordAuthBackend,
     EmailAuthBackend,
     ExternalAuthDataDict,
     ExternalAuthMethod,
@@ -153,6 +155,7 @@ from zproject.backends import (
     auth_enabled_helper,
     check_password_strength,
     dev_auth_enabled,
+    discord_auth_enabled,
     email_belongs_to_ldap,
     get_external_method_dicts,
     github_auth_enabled,
@@ -1580,7 +1583,7 @@ class SocialAuthBase(DesktopFlowTestingLib, ZulipTestCase, ABC):
         with self.captureOnCommitCallbacks(execute=True):
             do_invite_users(
                 iago,
-                [email],
+                [Invitee(full_name=name, email=email)],
                 [],
                 include_realm_default_subscriptions=True,
                 invite_expires_in_minutes=2 * 24 * 60,
@@ -1981,7 +1984,7 @@ class SocialAuthBase(DesktopFlowTestingLib, ZulipTestCase, ABC):
         with self.captureOnCommitCallbacks(execute=True):
             do_invite_users(
                 iago,
-                [email],
+                [Invitee(full_name=name, email=email)],
                 [],
                 include_realm_default_subscriptions=False,
                 invite_expires_in_minutes=invite_expires_in_minutes,
@@ -3414,6 +3417,36 @@ class SAMLAuthBackendTest(SocialAuthBase):
         self.assertEqual(data["email"], self.email)
         self.user_profile.refresh_from_db()
         self.assertEqual(self.user_profile.role, UserProfile.ROLE_REALM_OWNER)
+
+        # Verify that values for text fields are truncated if they're too long.
+        long_value = "x" * 60
+        expected_value = "x" * 49 + "…"
+        with (
+            self.settings(
+                SOCIAL_AUTH_SAML_ENABLED_IDPS=idps_dict,
+                SOCIAL_AUTH_SYNC_ATTRS_DICT=sync_custom_attrs_dict,
+            ),
+            self.assertLogs(self.logger_string, level="WARNING") as m,
+        ):
+            account_data_dict = self.get_account_data_dict(email=self.email, name=self.name)
+            result = self.social_auth_test(
+                account_data_dict,
+                subdomain="zulip",
+                extra_attributes=dict(mobilePhone=[long_value]),
+            )
+        data = load_subdomain_token(result)
+        self.assertEqual(data["email"], self.email)
+        self.assertIn(
+            self.logger_output(
+                f"Truncated value for custom profile field phone_number of user {self.user_profile.id} to 50 characters.",
+                type="warning",
+            ),
+            m.output,
+        )
+        phone_field_value = CustomProfileFieldValue.objects.get(
+            user_profile=self.user_profile, field=phone_field
+        ).value
+        self.assertEqual(phone_field_value, expected_value)
 
     def test_social_auth_group_sync(self) -> None:
         realm = get_realm("zulip")
@@ -5911,6 +5944,88 @@ class GoogleAuthBackendTest(SocialAuthBase):
         self.assert_json_error(result, "Invalid subdomain")
 
 
+class DiscordAuthBackendTest(SocialAuthBase):
+    BACKEND_CLASS = DiscordAuthBackend
+    CLIENT_KEY_SETTING = "SOCIAL_AUTH_DISCORD_KEY"
+    CLIENT_SECRET_SETTING = "SOCIAL_AUTH_DISCORD_SECRET"
+    LOGIN_URL = "/accounts/login/social/discord"
+    SIGNUP_URL = "/accounts/register/social/discord"
+    AUTHORIZATION_URL = "https://discord.com/api/oauth2/authorize"
+    ACCESS_TOKEN_URL = "https://discord.com/api/oauth2/token"
+    USER_INFO_URL = "https://discord.com/api/users/@me"
+    AUTH_FINISH_URL = "/complete/discord/"
+
+    def test_discord_auth_enabled(self) -> None:
+        with self.settings(AUTHENTICATION_BACKENDS=("zproject.backends.DiscordAuthBackend",)):
+            self.assertTrue(discord_auth_enabled())
+
+    @override
+    def get_account_data_dict(
+        self, email: str, name: str, id: str = "123", verified: bool = True
+    ) -> dict[str, Any]:
+        return dict(
+            id=id,
+            email=email,
+            global_name=name,
+            username=name.lower(),
+            verified=verified,
+            email_verified=True,
+        )
+
+    def test_social_auth_email_not_verified(self) -> None:
+        account_data_dict = self.get_account_data_dict(
+            email=self.email, name=self.name, verified=False
+        )
+        subdomain = "zulip"
+        realm = get_realm(subdomain)
+        with self.assertLogs(self.logger_string, level="WARNING") as m:
+            result = self.social_auth_test(account_data_dict, subdomain=subdomain)
+            self.assertEqual(result.status_code, 302)
+            self.assertEqual(result["Location"], realm.url + "/login/")
+        self.assertEqual(
+            m.output,
+            [
+                self.logger_output(
+                    "Social auth ({}) failed because user has no verified emails".format("Discord"),
+                    "warning",
+                )
+            ],
+        )
+
+    def test_authenticate_special_emails_with_encoded_user_id(self) -> None:
+        subdomain = "zulip"
+        realm = get_realm(subdomain)
+        discord_user_id = "123456"
+
+        discord_user = do_create_user(
+            EMAIL_WITH_ENCODED_DISCORD_ID.format(discord_user_id=discord_user_id),
+            None,
+            realm,
+            "Hamlet-discord",
+            acting_user=None,
+        )
+        account_data_dict = self.get_account_data_dict(
+            email="user-discord-1@zulip.com", name=discord_user.full_name, id=discord_user_id
+        )
+
+        assert account_data_dict["email"] != discord_user.delivery_email
+
+        result = self.social_auth_test(
+            account_data_dict,
+            expect_choose_email_screen=False,
+            subdomain=subdomain,
+            next="/user_uploads/image",
+        )
+        data = load_subdomain_token(result)
+        self.assertEqual(data["email"], discord_user.delivery_email)
+        self.assertEqual(data["full_name"], account_data_dict["global_name"])
+        self.assertEqual(data["subdomain"], subdomain)
+        self.assertEqual(result.status_code, 302)
+        parsed_url = urlsplit(result["Location"])
+        url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+        self.assertTrue(url.startswith("http://zulip.testserver/accounts/login/subdomain/"))
+
+
 class JSONFetchAPIKeyTest(ZulipTestCase):
     def test_success(self) -> None:
         user = self.example_user("hamlet")
@@ -8351,6 +8466,31 @@ class TestZulipLDAPUserPopulator(ZulipLDAPTestCase):
         self.assertIn(
             "DEBUG:django_auth_ldap:Failed to populate user hamlet: Invalid data for birthday field: Birthday is not a date",
             debug_log.output,
+        )
+
+    def test_update_custom_profile_field_truncation(self) -> None:
+        long_value = "x" * 60
+        expected_value = "x" * 49 + "…"
+        self.change_ldap_user_attr("hamlet", "homePhone", long_value)
+
+        with (
+            self.settings(
+                AUTH_LDAP_USER_ATTR_MAP={
+                    "full_name": "cn",
+                    "custom_profile_field__phone_number": "homePhone",
+                }
+            ),
+            self.assertLogs("zulip.ldap", "WARNING") as log_output,
+        ):
+            self.perform_ldap_sync(self.example_user("hamlet"))
+
+        hamlet = self.example_user("hamlet")
+        phone_field = CustomProfileField.objects.get(realm=hamlet.realm, name="Phone number")
+        phone_value = CustomProfileFieldValue.objects.get(user_profile=hamlet, field=phone_field)
+        self.assertEqual(phone_value.value, expected_value)
+        self.assertIn(
+            f"WARNING:zulip.ldap:Truncated value for custom profile field phone_number of user {hamlet.id} to 50 characters.",
+            log_output.output,
         )
 
     def test_update_custom_profile_field_no_mapping(self) -> None:

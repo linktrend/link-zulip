@@ -1,10 +1,12 @@
 # https://zulip.readthedocs.io/en/latest/subsystems/email.html#testing-in-a-real-email-client
 import configparser
 import logging
+import smtplib
 from collections.abc import Sequence
 from email.message import Message
 from typing import Any
 
+import backoff
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.core.mail.backends.smtp import EmailBackend
@@ -12,6 +14,22 @@ from django.core.mail.message import EmailAlternative, EmailMessage
 from django.template import loader
 from django.utils.timezone import now as timezone_now
 from typing_extensions import override
+
+MAX_CONNECTION_TRIES = 3
+
+# SMTPException is a subclass of OSError, so retry on connection-level
+# errors (ConnectionError, TimeoutError) and SMTPServerDisconnected
+# (dropped connection), but not on SMTP protocol errors like
+# SMTPAuthenticationError, SMTPRecipientsRefused, or SMTPDataError.
+smtp_connection_backoff = backoff.on_exception(
+    backoff.expo,
+    OSError,
+    max_tries=MAX_CONNECTION_TRIES,
+    logger=None,
+    giveup=lambda e: (
+        isinstance(e, smtplib.SMTPException) and not isinstance(e, smtplib.SMTPServerDisconnected)
+    ),
+)
 
 
 def get_forward_address() -> str:
@@ -123,10 +141,17 @@ class PersistentSMTPEmailBackend(EmailBackend):
         # auto-close the connection after sending.
         return False
 
-    def validate_or_reconnect(self) -> None:
+    @smtp_connection_backoff
+    def ensure_connected(self) -> None:
+        """Open the connection if needed, and validate that it is
+        still alive, reconnecting if necessary."""
+        self.open()
+        self._validate_or_reconnect()
+
+    def _validate_or_reconnect(self) -> None:
         """Validate that the existing SMTP connection is still alive,
-        reconnecting if necessary. Called from initialize_connection
-        with backoff protection, not from open()."""
+        reconnecting if necessary. Called with backoff protection,
+        not from open()."""
         status = None
         time_elapsed = (timezone_now() - self.opened_at).total_seconds() / 60
         if (

@@ -44,7 +44,7 @@ from zerver.lib.exceptions import MarkdownRenderingError
 from zerver.lib.markdown import fenced_code
 from zerver.lib.markdown.fenced_code import FENCE_RE
 from zerver.lib.mention import (
-    BEFORE_MENTION_ALLOWED_REGEX,
+    BEFORE_LINK_PRODUCING_MENTION_ALLOWED_REGEX,
     ChannelTopicInfo,
     FullNameInfo,
     MentionBackend,
@@ -101,8 +101,9 @@ html_safelisted_schemes = (
     "wtai",
     "xmpp",
     "zotero",
+    "asanadesktop",
 )
-auto_linked_schemes = ["https?", "hansoft", "obsidian", "zotero"]
+auto_linked_schemes = ["https?", "hansoft", "obsidian", "zotero", "asanadesktop"]
 allowed_schemes = ("http", "https", "ftp", "file", "mid", *html_safelisted_schemes)
 
 
@@ -158,7 +159,7 @@ def verbose_compile(pattern: str) -> Pattern[str]:
 
 
 STREAM_LINK_REGEX = rf"""
-                     {BEFORE_MENTION_ALLOWED_REGEX} # Start after whitespace or specified chars
+                     {BEFORE_LINK_PRODUCING_MENTION_ALLOWED_REGEX} # Start after whitespace or specified chars
                      \#\*\*                         # and after hash sign followed by double asterisks
                          (?P<stream_name>[^\*]+)    # stream name can contain anything
                      \*\*                           # ends by double asterisks
@@ -179,7 +180,7 @@ def get_compiled_stream_link_regex() -> Pattern[str]:
 
 
 STREAM_TOPIC_LINK_REGEX = rf"""
-                     {BEFORE_MENTION_ALLOWED_REGEX}  # Start after whitespace or specified chars
+                     {BEFORE_LINK_PRODUCING_MENTION_ALLOWED_REGEX}  # Start after whitespace or specified chars
                      \#\*\*                          # and after hash sign followed by double asterisks
                          (?P<stream_name>[^\*>]+)    # stream name can contain anything except >
                          >                           # > acts as separator
@@ -202,7 +203,7 @@ def get_compiled_stream_topic_link_regex() -> Pattern[str]:
 
 
 STREAM_TOPIC_MESSAGE_LINK_REGEX = rf"""
-                     {BEFORE_MENTION_ALLOWED_REGEX}  # Start after whitespace or specified chars
+                     {BEFORE_LINK_PRODUCING_MENTION_ALLOWED_REGEX}  # Start after whitespace or specified chars
                      \#\*\*                          # and after hash sign followed by double asterisks
                          (?P<stream_name>[^\*>]+)    # stream name can contain anything except >
                          >                           # > acts as separator
@@ -258,8 +259,9 @@ def get_web_link_regex() -> Pattern[str]:
     nested_paren_chunk %= (inner_paren_contents,)
 
     file_links = r"| (?:file://(/[^/ ]*)+/?)" if settings.ENABLE_FILE_LINKS else r""
+
     REGEX = rf"""
-        (?<![^\s'"\(,:<])    # Start after whitespace or specified chars
+        (?<![^\s'"\(,:<\u0080-\U0010FFFF])    # Start after whitespace, specified chars, or multibyte chars
                              # (Double-negative lookbehind to allow start-of-string)
         (?P<url>             # Main group
             (?:(?:           # Domain part
@@ -2832,9 +2834,12 @@ def render_message_markdown(
     return rendering_result
 
 
-def get_markdown_link_for_url(filename: str, url: str) -> str:
+def get_markdown_link_for_url(filename: str, url: str, inline_thumbnail: bool = False) -> str:
     # Our markdown has no escaping, so we cannot link any
     # text containing brackets; strip them from the
     # filename we're linking.
     filename = re.sub(r"\[|\]", "", filename)
-    return f"[{filename}]({url})"
+    markdown_link = f"[{filename}]({url})"
+    if inline_thumbnail:
+        markdown_link = "!" + markdown_link
+    return markdown_link

@@ -53,6 +53,7 @@ from requests import HTTPError
 from social_core.backends.apple import AppleIdAuth
 from social_core.backends.azuread import AzureADOAuth2
 from social_core.backends.base import BaseAuth
+from social_core.backends.discord import DiscordOAuth2
 from social_core.backends.github import GithubOAuth2, GithubOrganizationOAuth2, GithubTeamOAuth2
 from social_core.backends.gitlab import GitLabOAuth2
 from social_core.backends.google import GoogleOAuth2
@@ -96,6 +97,7 @@ from zerver.lib.subdomains import get_subdomain
 from zerver.lib.types import ProfileDataElementUpdateDict
 from zerver.lib.user_groups import check_user_group_name, get_role_based_system_groups_dict
 from zerver.lib.users import check_full_name, validate_user_custom_profile_field
+from zerver.lib.validator import LONG_STRING_MAX_LENGTH, SHORT_STRING_MAX_LENGTH
 from zerver.models import (
     CustomProfileField,
     NamedUserGroup,
@@ -127,6 +129,8 @@ if TYPE_CHECKING:
     from django.http.request import _ImmutableQueryDict
 
 redis_client = get_redis_client()
+
+EMAIL_WITH_ENCODED_DISCORD_ID = "{discord_user_id}@discordexport.zulip.com"
 
 
 def all_default_backend_names() -> list[str]:
@@ -239,6 +243,12 @@ def apple_auth_enabled(
     realm: Realm | None = None, realm_authentication_methods: dict[str, bool] | None = None
 ) -> bool:
     return auth_enabled_helper(["Apple"], realm, realm_authentication_methods)
+
+
+def discord_auth_enabled(
+    realm: Realm | None = None, realm_authentication_methods: dict[str, bool] | None = None
+) -> bool:
+    return auth_enabled_helper(["Discord"], realm, realm_authentication_methods)
 
 
 def saml_auth_enabled(
@@ -1099,7 +1109,7 @@ class ZulipLDAPAuthBackendBase(ZulipAuthMixin, LDAPBackend):
             values_by_var_name[var_name] = value
 
         try:
-            sync_user_profile_custom_fields(user_profile, values_by_var_name)
+            sync_user_profile_custom_fields(user_profile, values_by_var_name, ldap_logger)
         except SyncUserError as e:
             raise ZulipLDAPError(str(e)) from e
 
@@ -1747,8 +1757,18 @@ class SyncUserError(Exception):
     pass
 
 
-def validate_custom_profile_field_data(
-    realm_id: int, custom_field_name_to_value: dict[str, Any]
+def truncate_custom_profile_field_text_for_sync(value: str, length: int) -> str:
+    assert len(value) > length
+    return value[: length - 1] + "…"
+
+
+def validate_custom_profile_field_data_for_sync(
+    realm_id: int,
+    custom_field_name_to_value: dict[str, Any],
+    logger: logging.Logger,
+    # This can be called during new user creation (in SCIM codepaths),
+    # so user ID might not be available.
+    user_id: int | None,
 ) -> list[ProfileDataElementUpdateDict]:
     """Validate custom profile field var names and values, returning the
     validated profile data list.  Raises SyncUserError if a var name
@@ -1765,6 +1785,26 @@ def validate_custom_profile_field_data(
             field = fields_by_var_name[var_name]
         except KeyError:
             raise SyncUserError(f"Custom profile field with name {var_name} not found.")
+
+        # For TEXT type fields we can provide a reasonable truncation behavior to allow
+        # a mostly-successful sync instead of failing with an error.
+        text_field_max_length = {
+            CustomProfileField.SHORT_TEXT: SHORT_STRING_MAX_LENGTH,
+            CustomProfileField.PARAGRAPH: LONG_STRING_MAX_LENGTH,
+        }.get(field.field_type)
+        if (
+            isinstance(value, str)
+            and text_field_max_length is not None
+            and len(value) > text_field_max_length
+        ):
+            value = truncate_custom_profile_field_text_for_sync(value, text_field_max_length)
+            logger.warning(
+                "Truncated value for custom profile field %s of user %s to %d characters.",
+                var_name,
+                user_id,
+                text_field_max_length,
+            )
+
         try:
             validate_user_custom_profile_field(realm_id, field, value)
         except ValidationError as error:
@@ -1779,10 +1819,12 @@ def validate_custom_profile_field_data(
 
 
 def sync_user_profile_custom_fields(
-    user_profile: UserProfile, custom_field_name_to_value: dict[str, Any]
+    user_profile: UserProfile,
+    custom_field_name_to_value: dict[str, Any],
+    logger: logging.Logger,
 ) -> None:
-    profile_data = validate_custom_profile_field_data(
-        user_profile.realm_id, custom_field_name_to_value
+    profile_data = validate_custom_profile_field_data_for_sync(
+        user_profile.realm_id, custom_field_name_to_value, logger, user_profile.id
     )
     do_update_user_custom_profile_data_if_changed(user_profile, profile_data, None, notify=True)
 
@@ -2215,7 +2257,9 @@ def social_auth_sync_user_attributes(
         )
 
     try:
-        sync_user_profile_custom_fields(user_profile, custom_profile_field_name_to_value)
+        sync_user_profile_custom_fields(
+            user_profile, custom_profile_field_name_to_value, backend.logger
+        )
     except SyncUserError as e:
         backend.logger.warning(
             "Exception while syncing custom profile fields for user %s: %s",
@@ -2395,7 +2439,7 @@ def social_associate_user_helper(
     return user_profile
 
 
-@partial
+@partial  # type: ignore[untyped-decorator] # upstream annotation missing
 def social_auth_associate_user(
     backend: BaseAuth, *args: Any, **kwargs: Any
 ) -> HttpResponse | dict[str, Any]:
@@ -2858,6 +2902,63 @@ class AzureADAuthBackend(SocialAuthMixin, AzureADOAuth2):
     @override
     def display_icon(cls) -> str:
         return staticfiles_storage.url("images/authentication_backends/azuread-icon.png")
+
+
+@external_auth_method
+class DiscordAuthBackend(SocialAuthMixin, DiscordOAuth2):
+    sort_order = 60
+    name = "discord"
+    auth_backend_name = "Discord"
+    # https://docs.discord.com/developers/resources/user
+    DEFAULT_SCOPE = ["identify", "email"]
+
+    @classmethod
+    @override
+    def display_icon(cls) -> str:
+        return staticfiles_storage.url("images/authentication_backends/discord-icon.png")
+
+    def get_verified_emails(self, *args: Any, **kwargs: Any) -> list[str]:
+        verified_emails: list[str] = []
+        details = kwargs["response"]
+        email_verified = details.get("verified")
+        if email_verified:
+            verified_emails.append(details["email"])
+        return verified_emails
+
+    @override
+    def get_user_details(self, response: dict[str, Any]) -> dict[str, Any]:
+        # Discord has a "global_name" field which is more apt as a display name
+        # than the default "username" field. However, the field is optional.
+        # https://support.discord.com/hc/en-us/articles/12620128861463-New-Usernames-Display-Names#h_01GXPQABMYGEHGPRJJXJMPHF5C
+        return {
+            "id": response.get("id"),
+            "fullname": response.get("global_name") or response.get("username"),
+            "email": response.get("email") or "",
+        }
+
+    @override
+    def get_authenticated_user(
+        self,
+        email: str,
+        realm: Realm,
+        return_data: dict[str, Any],
+        **kwargs: Any,
+    ) -> UserProfile | None:
+        details = kwargs["details"]
+        return super().get_authenticated_user(
+            email=email,
+            realm=realm,
+            return_data=return_data,
+            kwargs=kwargs,
+        ) or super().get_authenticated_user(
+            # This is primarily for exported Discord users. Since Discord user
+            # emails are not exported, our import tool encodes their Discord
+            # user ID to a special email we can try to authenticate here.
+            email=EMAIL_WITH_ENCODED_DISCORD_ID.format(discord_user_id=details["id"]),
+            realm=realm,
+            return_data=return_data,
+            kwargs=kwargs,
+        )
 
 
 @external_auth_method

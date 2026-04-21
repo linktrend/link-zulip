@@ -1205,6 +1205,31 @@ paths:
                                 }
                             - type: object
                               description: |
+                                Event sent to a user's clients when the user completes the OAuth flow for
+                                the [Webex integration](/help/configure-call-provider). Clients need to
+                                know whether initiating Webex OAuth flow is required before creating a
+                                Webex call.
+                              properties:
+                                id:
+                                  $ref: "#/components/schemas/EventIdSchema"
+                                type:
+                                  allOf:
+                                    - $ref: "#/components/schemas/EventTypeSchema"
+                                    - enum:
+                                        - has_webex_token
+                                value:
+                                  type: boolean
+                                  description: |
+                                    A boolean specifying whether the user has a Webex access token.
+                              additionalProperties: false
+                              example:
+                                {
+                                  "type": "has_webex_token",
+                                  "value": true,
+                                  "id": 0,
+                                }
+                            - type: object
+                              description: |
                                 A simple event sent when the set of invitations changes.
                                 This event is sent to organization administrators and the creator of
                                 the changed invitation; this tells clients they need to refetch
@@ -1811,18 +1836,11 @@ paths:
                                     emoji_name: {}
                                     reaction_type: {}
                                     user_id: {}
-                                    user: {}
                                   example:
                                     {
                                       "type": "reaction",
                                       "op": "add",
                                       "user_id": 10,
-                                      "user":
-                                        {
-                                          "user_id": 10,
-                                          "email": "user10@zulip.testserver",
-                                          "full_name": "King Hamlet",
-                                        },
                                       "message_id": 32,
                                       "emoji_name": "tada",
                                       "emoji_code": "1f389",
@@ -1857,18 +1875,11 @@ paths:
                                     emoji_name: {}
                                     reaction_type: {}
                                     user_id: {}
-                                    user: {}
                                   example:
                                     {
                                       "type": "reaction",
                                       "op": "remove",
                                       "user_id": 10,
-                                      "user":
-                                        {
-                                          "user_id": 10,
-                                          "email": "user10@zulip.testserver",
-                                          "full_name": "King Hamlet",
-                                        },
                                       "message_id": 52,
                                       "emoji_name": "tada",
                                       "emoji_code": "1f389",
@@ -4350,11 +4361,119 @@ paths:
                               additionalProperties: false
                               description: |
                                 Event sent to all users in a Zulip organization when
+                                a [custom emoji](/help/custom-emoji) has been added.
+
+                                Only sent to clients that set the
+                                `individual_emoji_changes` client capability.
+
+                                **Changes**: New in Zulip 12.0 (feature level 491),
+                                replacing half of the functionality of the
+                                `realm_emoji/update` event.
+                              properties:
+                                id:
+                                  $ref: "#/components/schemas/EventIdSchema"
+                                type:
+                                  allOf:
+                                    - $ref: "#/components/schemas/EventTypeSchema"
+                                    - enum:
+                                        - realm_emoji
+                                op:
+                                  type: string
+                                  enum:
+                                    - add
+                                emoji:
+                                  $ref: "#/components/schemas/RealmEmoji"
+                              example:
+                                {
+                                  "type": "realm_emoji",
+                                  "op": "add",
+                                  "emoji":
+                                    {
+                                      "id": "2",
+                                      "name": "my_emoji",
+                                      "source_url": "/user_avatars/2/emoji/images/2.png",
+                                      "still_url": null,
+                                      "deactivated": false,
+                                      "author_id": 11,
+                                    },
+                                  "id": 0,
+                                }
+                            - type: object
+                              additionalProperties: false
+                              description: |
+                                Event sent to all users in a Zulip organization when
+                                a property of a [custom emoji](/help/custom-emoji) has
+                                been changed. Only the fields being updated are included
+                                in the event.
+
+                                Currently, the only property that can be updated is
+                                `deactivated`, but this may be extended in the future.
+
+                                Only sent to clients that set the
+                                `individual_emoji_changes` client capability.
+
+                                **Changes**: New in Zulip 12.0 (feature level 491),
+                                replacing half of the functionality of the
+                                `realm_emoji/update` event.
+                              properties:
+                                id:
+                                  $ref: "#/components/schemas/EventIdSchema"
+                                type:
+                                  allOf:
+                                    - $ref: "#/components/schemas/EventTypeSchema"
+                                    - enum:
+                                        - realm_emoji
+                                op:
+                                  type: string
+                                  enum:
+                                    - update_one
+                                emoji_id:
+                                  type: string
+                                  description: |
+                                    The ID of the custom emoji being updated.
+                                data:
+                                  type: object
+                                  description: |
+                                    And object containing the properties that have changed.
+                                  properties:
+                                    deactivated:
+                                      type: boolean
+                                      description: |
+                                        Whether the custom emoji has been deactivated.
+                                  additionalProperties: false
+                              required:
+                                - id
+                                - type
+                                - op
+                                - emoji_id
+                                - data
+                              example:
+                                {
+                                  "type": "realm_emoji",
+                                  "op": "update_one",
+                                  "emoji_id": "2",
+                                  "data": {"deactivated": true},
+                                  "id": 0,
+                                }
+                            - type: object
+                              additionalProperties: false
+                              description: |
+                                Event sent to all users in a Zulip organization when
                                 a [custom emoji](/help/custom-emoji) has been updated,
                                 typically when a new emoji has been added or an old one
                                 has been deactivated. The event contains all custom emoji
                                 configured for the organization, not just the updated
                                 custom emoji.
+
+                                This legacy event is sent to clients that do not set
+                                the `individual_emoji_changes` client capability.
+
+                                **Changes**: Before Zulip 12.0 (feature level
+                                491), this was the only format of
+                                `realm_emoji` event sent. Clients should set the
+                                `individual_emoji_changes` capability and handle
+                                `realm_emoji/add` and `realm_emoji/edit` events
+                                instead.
                               properties:
                                 id:
                                   $ref: "#/components/schemas/EventIdSchema"
@@ -4370,7 +4489,8 @@ paths:
                                 realm_emoji:
                                   type: object
                                   description: |
-                                    An object in which each key describes a realm emoji.
+                                    An object in which keys are RealmEmoji ids, and the
+                                    values describe the custom emoji for that id.
                                   additionalProperties:
                                     $ref: "#/components/schemas/RealmEmoji"
                               example:
@@ -5874,11 +5994,15 @@ paths:
                                         - 5 = Zoom (Server to Server OAuth integration)
                                         - 6 = Constructor Groups
                                         - 7 = Nextcloud Talk
+                                        - 8 = Webex (User OAuth integration)
 
                                         Note that only one of the [Zoom integrations][zoom-video-calls] can
                                         be configured on a Zulip server.
 
-                                        **Changes**: In Zulip 12.0 (feature level 465), added the
+                                        **Changes**: In Zulip 12.0 (feature level 493),
+                                        added the Webex OAuth option.
+
+                                        In Zulip 12.0 (feature level 465), added the
                                         Constructor Groups option.
 
                                         In Zulip 12.0 (feature level 460), added the
@@ -8766,11 +8890,18 @@ paths:
                   example: direct
                 to:
                   description: |
-                    For channel messages, either the name or integer ID of the channel. For
-                    direct messages, either a list containing integer user IDs or a list
-                    containing string Zulip API email addresses.
+                    The channel or users receiving the message.
 
-                    **Changes**: Support for using user/channel IDs was added in Zulip 2.0.0.
+                    For channel messages, this is either the name or integer ID of the
+                    channel.
+
+                    For direct messages, this is either a list containing integer user IDs or
+                    a list containing string Zulip API email addresses. The ID or email
+                    address of the user sending the message can be included in the list, but
+                    will be ignored by the server, unless the user sending the message is the
+                    only recipient of the message.
+
+                    **Changes**: In Zulip 2.0.0, support for using user/channel IDs was added.
                   oneOf:
                     - type: string
                     - type: integer
@@ -11332,48 +11463,26 @@ paths:
                       msg: {}
                       ignored_parameters_unsupported: {}
                       presence:
-                        type: object
+                        allOf:
+                          - $ref: "#/components/schemas/ModernPresenceFormat"
                         description: |
                           An object containing the presence details for the user.
-                        additionalProperties:
-                          type: object
-                          additionalProperties: false
-                          properties:
-                            timestamp:
-                              type: integer
-                              description: |
-                                When this update was received. If the timestamp
-                                is more than a few minutes in the past, the user is offline.
-                            status:
-                              type: string
-                              description: |
-                                Whether the user had recently interacted with Zulip at the time
-                                of the timestamp.
 
-                                Will be either `"active"` or `"idle"`
-                          description: |
-                            `{client_name}` or `"aggregated"`: Object containing the details of the user's
-                            presence.
-
-                            **Changes**: Starting with Zulip 7.0 (feature level 178), this will always
-                            contain two keys, `"website"` and `"aggregated"`, with identical data. The
-                            server no longer stores which client submitted presence updates.
-
-                            Previously, the `{client_name}` keys for these objects were the names of the
-                            different clients where the user was logged in, for example `website` or
-                            `ZulipDesktop`.
-                    example:
+                          **Changes**: In Zulip 12.0 (feature level 487), the
+                          `active_timestamp` and `idle_timestamp` fields were added to
+                          this object, deprecating and removing the `website` and
+                          `aggregated` dictionaries, which contained a timestamp and
+                          a status string.
+                example:
+                  {
+                    "msg": "",
+                    "presence":
                       {
-                        "presence":
-                          {
-                            "website":
-                              {"timestamp": 1532697622, "status": "active"},
-                            "aggregated":
-                              {"timestamp": 1532697622, "status": "active"},
-                          },
-                        "result": "success",
-                        "msg": "",
-                      }
+                        "active_timestamp": 1656958520,
+                        "idle_timestamp": 1656958530,
+                      },
+                    "result": "success",
+                  }
   /users/me:
     get:
       operationId: get-own-user
@@ -11660,6 +11769,11 @@ paths:
 
         Changing a user's API key will immediately log them out of Zulip
         on devices registered for [mobile push notifications][mobile-push].
+
+        **Changes**: Before Zulip 12.0 (feature level 492),
+        regenerating a user's API key didn't remove all of the user's
+        [E2EE push device registrations](/api/register-push-device),
+        so E2EE push notifications could still be sent.
 
         [mobile-push]: https://zulip.readthedocs.io/en/latest/production/mobile-push-notifications.html
       responses:
@@ -12139,6 +12253,128 @@ paths:
                       "server_timestamp": 1656958539.6287155,
                       "presence_last_update_id": 1000,
                     }
+  /users/me/profile_data:
+    patch:
+      operationId: update-profile-data
+      summary: Update your profile data
+      tags: ["users"]
+      description: |
+        Update the current user's [profile data](/help/edit-your-profile) for
+        one or more of the [custom profile fields](/help/custom-profile-fields)
+        configured in the organization.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                data:
+                  description: |
+                    An array of objects describing updates to the custom profile
+                    field data for the user.
+                  type: array
+                  example:
+                    [{"id": 4, "value": "0"}, {"id": 5, "value": "1909-04-05"}]
+                  items:
+                    $ref: "#/components/schemas/ProfileDataUpdate"
+              required:
+                - data
+            encoding:
+              data:
+                contentType: application/json
+      responses:
+        "200":
+          $ref: "#/components/responses/SimpleSuccess"
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "You are not allowed to change this field. Contact an administrator to update it.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when editing custom profile fields
+                          is restricted in the organization:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Field id 99 not found.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when a custom profile field
+                          ID does not exist:
+    delete:
+      operationId: remove-profile-data
+      summary: Remove your profile data
+      tags: ["users"]
+      description: |
+        Remove the current user's [profile data](/help/edit-your-profile) for
+        one or more of the [custom profile fields](/help/custom-profile-fields)
+        configured in the organization.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                data:
+                  description: |
+                    An array of custom profile field IDs to remove any data set for
+                    the user.
+                  type: array
+                  example: [1]
+                  items:
+                    type: integer
+              required:
+                - data
+            encoding:
+              data:
+                contentType: application/json
+      responses:
+        "200":
+          $ref: "#/components/responses/SimpleSuccess"
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "You are not allowed to change this field. Contact an administrator to update it.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when editing custom profile fields
+                          is restricted in the organization:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Field id 99 not found.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when a custom profile field
+                          ID does not exist:
   /users/me/status:
     post:
       operationId: update-status
@@ -13287,9 +13523,22 @@ paths:
         - **Rotate push key**: Provide only the push key fields.
         - **Rotate token**: Provide only the token fields.
 
-        **Changes**: In Zulip 12.0 (feature level 468), the endpoint
-        was significantly redesigned to support rotation of `push_key` and
-        token provided by FCM/APNs.
+        On a successful registration, the server automatically removes
+        any legacy push device registration with a matching token for
+        the user. For self-hosted servers, if removing the legacy
+        registration from the push notification bouncer fails (e.g.,
+        due to a network error), legacy notifications to that token
+        will continue until all of the user's legacy registrations
+        have been removed from the local server, at which point the
+        server will stop sending legacy notification requests to the
+        bouncer entirely.
+
+        **Changes**: In Zulip 12.0 (feature level 483),
+        the server began automatically removing legacy registrations
+        with a matching token on successful E2EE registration.
+
+        In Zulip 12.0 (feature level 468), the endpoint was significantly
+        redesigned to support rotation of `push_key` and token provided by FCM/APNs.
 
         New in Zulip 11.0 (feature level 406).
       requestBody:
@@ -14200,8 +14449,8 @@ paths:
                       emoji:
                         type: object
                         description: |
-                          An object that contains `emoji` objects, each identified with their
-                          emoji ID as the key.
+                          An object in which keys are RealmEmoji ids, and the
+                          values describe the custom emoji for that id.
                         additionalProperties:
                           $ref: "#/components/schemas/RealmEmoji"
                     example:
@@ -14658,9 +14907,9 @@ paths:
                     - **1**: Short text
                     - **2**: Paragraph
                     - **3**: Dropdown
-                    - **4**: Date picker
+                    - **4**: Date
                     - **5**: Link
-                    - **6**: Person picker
+                    - **6**: Users
                     - **7**: External account
                     - **8**: Pronouns
 
@@ -14691,7 +14940,7 @@ paths:
                     At most 2 profile fields may have this property be true in a given
                     organization.
 
-                    The "Person picker" profile field is not supported, but that is likely to
+                    The "Users" profile field is not supported, but that is likely to
                     be temporary.
 
                     [profile-field-types]: /help/custom-profile-fields#profile-field-types
@@ -17558,6 +17807,17 @@ paths:
                       <br />
                       **Changes**: New in Zulip 11.0 (feature level 419).
 
+                    - `individual_emoji_changes`: Boolean for whether the client supports
+                      receiving the [`realm_emoji/add` and `realm_emoji/edit` event
+                      types](/api/get-events#realm_emoji-add). If true, the server will
+                      send individual `realm_emoji/add` events when a custom emoji is
+                      added, and `realm_emoji/edit` events when a custom emoji's
+                      properties are changed (e.g., deactivated). Otherwise, the server
+                      will send the legacy `realm_emoji/update` event containing all
+                      custom emoji for the organization.
+                      <br />
+                      **Changes**: New in Zulip 12.0 (feature level 491).
+
                     [help-linkifiers]: /help/add-a-custom-linkifier
                     [rfc6570]: https://www.rfc-editor.org/rfc/rfc6570.html
                     [events-linkifiers]: /api/get-events#realm_linkifiers
@@ -17730,9 +17990,9 @@ paths:
                             property itself. The current supported field types are as follows:
 
                             - `SHORT_TEXT`
-                            - `LONG_TEXT`
+                            - `PARAGRAPH`
                             - `DATE` for date-based fields.
-                            - `SELECT` for a list of options.
+                            - `DROPDOWN` for a list of options.
                             - `URL` for links.
                             - `EXTERNAL_ACCOUNT` for external accounts.
                             - `USER` for selecting a user for the field.
@@ -18001,7 +18261,7 @@ paths:
 
                           **Changes**: New in Zulip 11.0 (feature level 399).
                         items:
-                          $ref: "#/components/schemas/ScheduledMessage"
+                          $ref: "#/components/schemas/Reminder"
 
                       muted_topics:
                         type: array
@@ -18115,8 +18375,8 @@ paths:
                         description: |
                           Present if `realm_emoji` is present in `fetch_event_types`.
 
-                          A dictionary of objects where each object describes a custom
-                          emoji that has been uploaded in this Zulip organization.
+                          An object in which keys are RealmEmoji ids, and the
+                          values describe the custom emoji for that id.
                         type: object
                         additionalProperties:
                           $ref: "#/components/schemas/RealmEmoji"
@@ -19336,6 +19596,17 @@ paths:
                           completed OAuth flow for the [Zoom integration](/help/configure-call-provider).
                           Clients need to know whether initiating Zoom OAuth is required before
                           creating a Zoom call.
+                      has_webex_token:
+                        type: boolean
+                        description: |
+                          Present if `video_calls` is present in `fetch_event_types`.
+
+                          A boolean that denotes whether the user has completed the OAuth flow for
+                          the [Webex integration](/help/configure-call-provider). Clients need to
+                          know whether initiating Webex OAuth flow is required before creating a
+                          Webex call.
+
+                          **Changes**: New in Zulip 12.0 (feature level 493).
                       giphy_api_key:
                         type: string
                         description: |
@@ -19368,6 +19639,16 @@ paths:
                           [Tenor API TOS](https://developers.google.com/tenor/guides/api-terms).
 
                           **Changes**: New in Zulip 12.0 (feature level 442).
+                      klipy_api_key:
+                        type: string
+                        description: |
+                          Present if `klipy` is present in `fetch_event_types`.
+
+                          KLIPY API keys are meant to be sent to the clients, see the
+                          best practices in the [Migrate from Tenor documentation](https://docs.klipy.com/migrate-from-tenor/search#Best-practices).
+                          Please don't use our API key for an app unrelated to Zulip.
+
+                          **Changes**: New in Zulip 12.0 (feature level 486).
                       devices:
                         type: object
                         description: |
@@ -20158,11 +20439,15 @@ paths:
                           - 5 = Zoom (Server to Server OAuth integration)
                           - 6 = Constructor Groups
                           - 7 = Nextcloud Talk
+                          - 8 = Webex (User OAuth integration)
 
                           Note that only one of the [Zoom integrations][zoom-video-calls] can
                           be configured on a Zulip server.
 
-                          **Changes**: In Zulip 12.0 (feature level 465), added the
+                          **Changes**: In Zulip 12.0 (feature level 493), added the
+                          Webex OAuth option.
+
+                          In Zulip 12.0 (feature level 465), added the
                           Nextcloud Talk option.
 
                           In Zulip 12.0 (feature level 460), added the
@@ -22103,6 +22388,12 @@ paths:
                           openid connect:
                             description: |
                               Whether the user can authenticate using OpenID Connect.
+                            type: boolean
+                          discord:
+                            description: |
+                              Whether the user can authenticate using their Discord account.
+
+                              **Changes**: New in Zulip 12.0 (feature level 488).
                             type: boolean
                       external_authentication_methods:
                         type: array
@@ -26439,6 +26730,48 @@ paths:
                         "url": "https://nextcloud.example.com/index.php/call/abc123xyz",
                       }
 
+  /calls/webex/create:
+    post:
+      tags: ["channels"]
+      operationId: create-webex-video-call
+      summary: Create Webex video call
+      description: |
+        Create a video call URL for a Webex video call.
+
+        Requires [Webex integration](/integrations/webex) to be configured
+        on the Zulip server.
+
+        Clients should confirm that the user has completed the OAuth process
+        with Webex and has a Webex token before attempting to create a video
+        call URL. See the `has_webex_token` field in the [`POST /register`
+        response](/api/register-queue), as well as the [`has_webex_token`
+        event type](/api/get-events#has_webex_token).
+
+        **Changes**: New in Zulip 12.0 (feature level 493).
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/JsonSuccessBase"
+                  - additionalProperties: false
+                    properties:
+                      result: {}
+                      msg: {}
+                      ignored_parameters_unsupported: {}
+                      url:
+                        description: |
+                          The URL for the Webex meeting.
+                        type: string
+                        example: "https://xxkk-7xpz.webex.com/xxkk-7xpz/j.php?MTID=mebb3ba1f366f683bcaec9d32773ce034"
+                    example:
+                      {
+                        "msg": "",
+                        "result": "success",
+                        "url": "https://xxkk-7xpz.webex.com/xxkk-7xpz/j.php?MTID=mebb3ba1f366f683bcaec9d32773ce034",
+                      }
   /calls/constructorgroups/create:
     post:
       tags: ["channels"]
@@ -26983,12 +27316,11 @@ components:
         integration. In the web app, these are used when
         [generating a URL for an integration](/help/generate-integration-url).
 
-        This is an unstable API expected to be used only by the Zulip web
-        app. Please discuss in chat.zulip.org before using it.
+        **Changes**: Before Zulip 12.0 (feature level 485), `input_type`
+        was named `validator`.
 
-        **Changes**: New in Zulip 11.0 (feature level 403). Previously,
-        these optional URL parameter options were included in the
-        `config_options` object.
+        New in Zulip 11.0 (feature level 403). Previously, these optional
+        URL parameter options were included in the `config_options` object.
       items:
         type: object
         additionalProperties: false
@@ -26996,17 +27328,15 @@ components:
           key:
             type: string
             description: |
-              The parameter variable to encode the users input for this
-              option in the integrations webhook URL.
+              The name of the URL parameter.
           label:
             type: string
             description: |
-              A human-readable label of the url option.
-          validator:
+              The label used for the input field in the UI.
+          input_type:
             type: string
             description: |
-              The name of the validator function for the configuration
-              option.
+              The type of input field this URL parameter maps to in the UI.
     CustomProfileField:
       type: object
       additionalProperties: false
@@ -27031,9 +27361,9 @@ components:
             - **1**: Short text
             - **2**: Paragraph
             - **3**: Dropdown
-            - **4**: Date picker
+            - **4**: Date
             - **5**: Link
-            - **6**: Person picker
+            - **6**: Users
             - **7**: External account
             - **8**: Pronouns
 
@@ -27068,7 +27398,7 @@ components:
           description: |
             Whether the custom profile field, display or not on the user card.
 
-            Must be false for `Person picker`
+            Must be false for `Users`
             [profile field types](/help/custom-profile-fields#profile-field-types).
 
             This field is only included when its value is `true`.
@@ -27164,8 +27494,8 @@ components:
       type: object
       additionalProperties: false
       description: |
-        `{emoji_id}`: Object containing details about the emoji with
-        the specified ID. It has the following properties:
+        Object containing details about an emoji. It has the
+        following properties:
       properties:
         id:
           type: string
@@ -28078,45 +28408,17 @@ components:
               description: |
                 The ID of the user who added the reaction.
 
-                **Changes**: New in Zulip 3.0 (feature level 2). The `user`
-                object is deprecated and will be removed in the future.
-            user:
-              type: object
-              additionalProperties: false
-              deprecated: true
-              description: |
-                Dictionary with data on the user who added the
-                reaction, including the user ID as the `user_id`
-                field.
+                **Changes**: In Zulip 12.0 (feature level 484),
+                the deprecated `user` object field was removed. It contained
+                the following properties: `user_id`, `email`,
+                `full_name`, and `is_mirror_dummy`.
 
-                **Changes**: This field was re-added in Zulip 10.0 (feature
-                level 339) after having been removed in Zulip 10.0 (feature
-                level 328). It remains deprecated; it was re-added because the
-                React Native mobile app was still using it.
+                Previously, in Zulip 10.0 (feature level 339), this
+                object was temporarily re-added to support older mobile
+                clients, after having been removed in Zulip 10.0
+                (feature level 328).
 
-                **Deprecated** and to be removed in a future release once core
-                clients have migrated to use the adjacent `user_id` field, which
-                was introduced in Zulip 3.0 (feature level 2). Clients
-                supporting older Zulip server versions should use the user ID
-                mentioned in the description above as they would the `user_id`
-                field.
-              properties:
-                user_id:
-                  type: integer
-                  description: |
-                    ID of the user.
-                email:
-                  type: string
-                  description: |
-                    Zulip API email of the user.
-                full_name:
-                  type: string
-                  description: |
-                    Full name of the user.
-                is_mirror_dummy:
-                  type: boolean
-                  description: |
-                    Whether the user is a mirror dummy.
+                New in Zulip 3.0 (feature level 2).
     MessagesEvent:
       allOf:
         - $ref: "#/components/schemas/MessagesBase"
@@ -28187,9 +28489,16 @@ components:
 
             See the help center article on [message formatting](/help/format-your-message-using-markdown) for details on Zulip-flavored Markdown.
         display_recipient:
+          description: |
+            Data on the recipient of the message. Will be one of the following:
           oneOf:
             - type: string
+              description: |
+                The name of the channel the message was received in.
             - type: array
+              description: |
+                An array of dictionaries containing basic data on the users who
+                received the message.
               items:
                 type: object
                 additionalProperties: false
@@ -28210,10 +28519,6 @@ components:
                     type: boolean
                     description: |
                       Whether the user is a mirror dummy.
-          description: |
-            Data on the recipient of the message;
-            either the name of a channel or a dictionary containing basic data on
-            the users who received the message.
         edit_history:
           type: array
           items:
@@ -28375,7 +28680,13 @@ components:
             message (either a channel or group of users). Useful primarily
             for hashing.
 
-            **Changes**: Before Zulip 10.0 (feature level 327), `recipient_id`
+            **Changes**: In Zulip 12.0 (feature level 482),
+            `recipient_id` in 1:1 direct messages changed to a new
+            value; it still has the semantics of "the 1:1 conversation
+            with a specific user," but the raw value changed due to
+            internal changes.
+
+            Before Zulip 10.0 (feature level 327), `recipient_id`
             was the same across all incoming 1:1 direct messages. Now, each
             incoming message uniquely shares a `recipient_id` with outgoing
             messages in the same conversation.
@@ -28991,6 +29302,7 @@ components:
               nullable: true
             avatar_version: {}
             is_imported_stub: {}
+            is_deleted: {}
             profile_data:
               $ref: "#/components/schemas/ProfileData"
     UserBase:
@@ -29152,6 +29464,16 @@ components:
 
             **Changes**: New in Zulip 12.0 (feature level 433).
           example: false
+        is_deleted:
+          type: boolean
+          description: |
+            A boolean specifying whether the user has been permanently
+            deleted. Deleted users are a subset of deactivated users
+            (`is_active=false`) who have had their account data removed.
+
+            This field is only present when `true`.
+
+            **Changes**: New in Zulip 12.0 (feature level 490).
     ProfileData:
       type: object
       description: |
@@ -29184,6 +29506,37 @@ components:
               as are used for message content.
 
               See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
+    ProfileDataUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          description: |
+            The ID of the custom profile field to update.
+        value:
+          description: |
+            The new value for the user of the specified custom profile field.
+
+            If null, then any value already set for the specified custom
+            profile field will be removed.
+          oneOf:
+            - type: string
+              nullable: true
+              description: |
+                A string value that matches the [type of the custom profile
+                field](/help/custom-profile-fields#profile-field-types), e.g., if the
+                profile field type is a link then the string must be a URL.
+
+            - type: array
+              items:
+                type: integer
+              description: |
+                An array of integer user IDs, which is for the **Users** type of
+                [custom profile field](/help/custom-profile-fields#profile-field-types).
+      required:
+        - id
+        - value
     ChannelFolder:
       type: object
       additionalProperties: false
@@ -30344,10 +30697,11 @@ components:
                 example: 400
               profile_data:
                 description: |
-                  A dictionary containing the updated custom profile field data for the user.
+                  An array of objects describing updates to the [custom profile
+                  field](/help/custom-profile-fields) data for the user.
                 type: array
                 items:
-                  type: object
+                  $ref: "#/components/schemas/ProfileDataUpdate"
                 example:
                   [{"id": 4, "value": "0"}, {"id": 5, "value": "1909-04-05"}]
               new_email:

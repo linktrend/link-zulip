@@ -546,9 +546,17 @@ export function make_compose_box_original_size(): void {
 
     // Again initialise the compose textarea as it was destroyed
     // when compose box was made full screen
-    autosize($("textarea#compose-textarea"));
+    const $compose_textarea = $<HTMLTextAreaElement>("textarea#compose-textarea");
+    autosize($compose_textarea);
 
-    $("textarea#compose-textarea").trigger("focus");
+    // If the preview area is open, reset the min-height for it to
+    // ensure a smooth back-and-forth for toggling preview mode.
+    const $preview_message_area = $("#compose .preview_message_area");
+    if ($preview_message_area.length > 0) {
+        const edit_height = $compose_textarea.height();
+        $preview_message_area.css({"min-height": edit_height + "px"});
+    }
+    $compose_textarea.trigger("focus");
 }
 
 export function handle_scrolling_formatting_buttons(event: JQuery.ScrollEvent): void {
@@ -887,15 +895,12 @@ export let format_text = (
 
     const format_list = (type: string): void => {
         let is_marked: (line: string) => boolean;
-        let mark: (line: string, i: number) => string;
         let strip_marking: (line: string) => string;
         if (type === "bulleted") {
             is_marked = bulleted_numbered_list_util.is_bulleted;
-            mark = (line: string) => "- " + line;
             strip_marking = bulleted_numbered_list_util.strip_bullet;
         } else {
             is_marked = bulleted_numbered_list_util.is_numbered;
-            mark = (line, i) => i + 1 + ". " + line;
             strip_marking = bulleted_numbered_list_util.strip_numbering;
         }
         // We toggle complete lines even when they are partially selected (and just selecting the
@@ -906,10 +911,23 @@ export let format_text = (
         // If there is even a single unmarked line selected, we mark all.
         const should_mark = selected_lines.split("\n").some((line) => !is_marked(line));
         if (should_mark) {
-            selected_lines = selected_lines
-                .split("\n")
-                .map((line, i) => mark(line, i))
-                .join("\n");
+            const lines = selected_lines.split("\n");
+            const processed_lines = [];
+            let counter = 1;
+            for (const line of lines) {
+                if (line.trim() === "") {
+                    processed_lines.push(line);
+                } else {
+                    if (type === "bulleted") {
+                        processed_lines.push("- " + line);
+                    } else {
+                        processed_lines.push(counter + ". " + line);
+                        counter += 1;
+                    }
+                }
+            }
+            selected_lines = processed_lines.join("\n");
+
             // We always ensure a blank line after the list, as we want
             // a clean separation between the list and the rest of the text, especially
             // when the markdown is rendered.
@@ -1584,6 +1602,31 @@ let prevent_next_spinner = false;
 
 export function set_prevent_next_spinner(value: boolean): void {
     prevent_next_spinner = value;
+}
+
+export function enter_preview_mode($container: JQuery): void {
+    // Disable unneeded compose_control_buttons as we don't
+    // need them in preview mode.
+    $container.addClass("preview_mode");
+    $container.find(".preview_mode_disabled .compose_control_button").attr("tabindex", -1);
+
+    $container.find(".markdown_preview").hide();
+    $container.find(".undo_markdown_preview").show();
+    $container.find(".undo_markdown_preview").trigger("focus");
+}
+
+export function exit_preview_mode($container: JQuery): void {
+    $container.find("textarea.message-textarea").trigger("focus");
+
+    // While in preview mode we disable unneeded compose_control_buttons,
+    // so here we are re-enabling those compose_control_buttons
+    $container.removeClass("preview_mode");
+    $container.find(".preview_mode_disabled .compose_control_button").attr("tabindex", 0);
+
+    $container.find(".undo_markdown_preview").hide();
+    $container.find(".preview_message_area").hide();
+    $container.find(".preview_content").empty();
+    $container.find(".markdown_preview").show();
 }
 
 export function render_and_show_preview(
