@@ -25,6 +25,7 @@ import * as channel from "./channel.ts";
 import * as compose_actions from "./compose_actions.ts";
 import * as compose_banner from "./compose_banner.ts";
 import * as compose_call from "./compose_call.ts";
+import {compose_call_session_manager} from "./compose_call_session.ts";
 import * as compose_tooltips from "./compose_tooltips.ts";
 import * as compose_ui from "./compose_ui.ts";
 import * as compose_validate from "./compose_validate.ts";
@@ -1136,7 +1137,7 @@ export function end_message_row_edit($row: JQuery): void {
         currently_editing_messages.delete(message.id);
         resized_edit_box_height.delete(message.id);
         message_lists.current.hide_edit_message($row);
-        compose_call.abandon_all_callbacks_for_key(message.id.toString());
+        compose_call_session_manager.abandon_session(message.id.toString());
     }
     if ($row.find(".could-be-condensed").length > 0) {
         if ($row.find(".condensed").length > 0) {
@@ -1821,15 +1822,7 @@ export function is_message_oldest_or_newest(
 
 export function show_preview_area($element: JQuery): void {
     const $row = rows.get_closest_row($element);
-
-    // Disable unneeded compose_control_buttons as we don't
-    // need them in preview mode.
-    $row.addClass("preview_mode");
-    $row.find(".preview_mode_disabled .compose_control_button").attr("tabindex", -1);
-
-    $row.find(".markdown_preview").hide();
-    $row.find(".undo_markdown_preview").show();
-
+    compose_ui.enter_preview_mode($row);
     render_preview_area($row);
 }
 
@@ -1851,14 +1844,5 @@ export function render_preview_area($row: JQuery): void {
 
 export function clear_preview_area($element: JQuery): void {
     const $row = rows.get_closest_row($element);
-
-    // While in preview mode we disable unneeded compose_control_buttons,
-    // so here we are re-enabling those compose_control_buttons
-    $row.removeClass("preview_mode");
-    $row.find(".preview_mode_disabled .compose_control_button").attr("tabindex", 0);
-
-    $row.find(".undo_markdown_preview").hide();
-    $row.find(".preview_message_area").hide();
-    $row.find(".preview_content").empty();
-    $row.find(".markdown_preview").show();
+    compose_ui.exit_preview_mode($row);
 }

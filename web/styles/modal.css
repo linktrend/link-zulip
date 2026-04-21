@@ -135,12 +135,13 @@
 }
 
 .modal__subtitle {
-    margin-top: 0.25em; /* 4px at 16px/1em */
+    margin-top: 0.875em; /* 14px at 16px/1em */
     line-height: 1.25; /* 20px at 16px/1em */
 }
 
 .modal__close {
     grid-area: modal-close-button;
+    align-self: center;
 
     &:focus-visible {
         outline-offset: -2px !important;
@@ -259,9 +260,11 @@
         line-height: 1;
     }
 
-    #profile-tab {
+    .tabcontent {
         margin: 1px 5px 0;
+    }
 
+    #profile-tab {
         & li.custom_user_field {
             display: block;
         }
@@ -496,22 +499,28 @@
     margin-bottom: 5px;
     -webkit-overflow-scrolling: touch;
 
-    .user-profile-group-row,
-    .stream-row {
+    .modal-group-list-row,
+    .modal-channel-list-row {
         display: flex;
         justify-content: space-between;
-        padding: 0.3125em 0.625em;
+        padding-right: 0.625em;
         align-items: center;
         text-decoration: none;
         border-bottom: none;
         border-radius: 4px;
         color: var(--color-dropdown-item);
-        cursor: pointer;
 
-        .user-group-list-item,
-        .stream-row-content {
+        .list-row-content {
             display: flex;
             overflow: hidden;
+            border-radius: 4px;
+            padding: 0.3125em 0.5em;
+            cursor: pointer;
+
+            &:focus-visible {
+                outline: 1px solid var(--color-outline-focus);
+                outline-offset: -2px;
+            }
         }
 
         .stream-privacy {
@@ -523,34 +532,19 @@
             padding-right: 3px;
         }
 
-        &:hover {
-            background-color: var(--color-user-profile-list-item-hover);
-        }
-
-        &:focus-visible {
-            outline: 1px solid var(--color-outline-user-profile-list-item);
-            outline-offset: -2px;
-        }
-
-        .user-group-name,
-        .stream-name {
+        .list-item-name {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            padding-right: 2px;
         }
     }
 
-    .subscription-group-list,
-    .subscription-stream-list,
-    .edit-channel-folder-stream-list {
+    .modal-list-scroll-container {
         /* We set max-height to remaining height of stream-list-container
             so that we don't clip it. Search field height takes up 2em of total. */
         height: calc(100% - 2em);
 
-        .user-group-list,
-        .user-stream-list,
-        .folder-stream-list {
+        .modal-item-list {
             list-style: none;
             margin: 0;
         }

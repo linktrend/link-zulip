@@ -236,24 +236,30 @@
 
 .hidden-remove-button {
     opacity: 0;
-    visibility: hidden;
-    transition:
-        opacity 0.3s ease,
-        visibility 0.3s ease;
+    transition: opacity 0.3s ease;
     pointer-events: none;
 }
 
 .hidden-remove-button:has(.button-loading-indicator) {
-    visibility: visible;
     cursor: default;
     opacity: 1;
 }
 
 .hidden-remove-button-row:hover
+    .hidden-remove-button:not(:has(.button-loading-indicator)),
+.hidden-remove-button-row:focus-within
     .hidden-remove-button:not(:has(.button-loading-indicator)) {
     opacity: 1;
-    visibility: visible;
     pointer-events: auto;
+}
+
+.hidden-remove-button:focus-visible {
+    opacity: 1;
+    /* TODO: We need to consolidate icon-button outline to this
+        outline color and separately define outline colors to specific
+        elements if needed. We should remove this after that. */
+    outline: 1px solid var(--color-outline-focus) !important;
+    outline-offset: -2px;
 }
 
 #stream-actions-menu-popover,
@@ -502,6 +508,13 @@ ul.popover-group-menu-member-list {
 
     .gif-search-container {
         margin: 4px 4px 2px;
+    }
+
+    .no-results {
+        font-style: italic;
+        color: var(--color-text-default);
+        grid-column: 1 / -1;
+        text-align: center;
     }
 
     .gif-picker-content {

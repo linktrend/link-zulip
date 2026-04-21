@@ -5,6 +5,7 @@ import secrets
 import sys
 from email.headerregistry import Address, AddressHeader
 from email.message import EmailMessage
+from email.utils import parseaddr
 from re import Match
 
 from django.conf import settings
@@ -24,9 +25,9 @@ from zerver.lib.email_mirror_helpers import (
     decode_email_address,
     get_email_gateway_message_string_from_address,
 )
-from zerver.lib.email_notifications import convert_html_to_markdown
 from zerver.lib.exceptions import JsonableError, RateLimitedError
 from zerver.lib.markdown import get_markdown_link_for_url
+from zerver.lib.markdown.from_html import convert_html_to_markdown
 from zerver.lib.message import normalize_body, truncate_content, truncate_topic
 from zerver.lib.rate_limiter import RateLimitedObject
 from zerver.lib.send_email import FromAddress
@@ -44,7 +45,7 @@ from zerver.models import (
 )
 from zerver.models.clients import get_client
 from zerver.models.streams import StreamTopicsPolicyEnum, get_stream_by_id_in_realm
-from zerver.models.users import get_system_bot, get_user_profile_by_id
+from zerver.models.users import get_system_bot
 from zproject.backends import is_user_active
 
 if sys.version_info < (3, 14):
@@ -136,7 +137,6 @@ def get_usable_missed_message_address(address: str) -> MissedMessageEmailAddress
             "message",
             "message__sender",
             "message__recipient",
-            "message__sender__recipient",
         ).get(email_token=token)
     except MissedMessageEmailAddress.DoesNotExist:
         raise ZulipEmailForwardError("Zulip notification reply address is invalid.")
@@ -401,7 +401,7 @@ def find_emailgateway_recipient(message: EmailMessage) -> str:
             if isinstance(header_value, AddressHeader):
                 emails = [addr.addr_spec for addr in header_value.addresses]
             else:
-                emails = [str(header_value)]
+                emails = [parseaddr(str(header_value))[1]]
 
             for email in emails:
                 if match_email_re.match(email):
@@ -490,12 +490,7 @@ def process_missed_message(to: str, message: EmailMessage) -> None:
 
     user_profile = mm_address.user_profile
     topic_name = mm_address.message.topic_name()
-
-    if mm_address.message.recipient.type == Recipient.PERSONAL:
-        # We need to reply to the sender so look up their personal recipient_id
-        recipient = mm_address.message.sender.recipient
-    else:
-        recipient = mm_address.message.recipient
+    recipient = mm_address.message.recipient
 
     if not is_user_active(user_profile):
         logger.warning("Sending user is not active. Ignoring this message notification email.")
@@ -508,11 +503,6 @@ def process_missed_message(to: str, message: EmailMessage) -> None:
         stream = get_stream_by_id_in_realm(recipient.type_id, user_profile.realm)
         send_mm_reply_to_stream(user_profile, stream, topic_name, body)
         recipient_str = stream.name
-    elif recipient.type == Recipient.PERSONAL:
-        recipient_user_id = recipient.type_id
-        recipient_user = get_user_profile_by_id(recipient_user_id)
-        recipient_str = recipient_user.email
-        internal_send_private_message(user_profile, recipient_user, body)
     elif recipient.type == Recipient.DIRECT_MESSAGE_GROUP:
         display_recipient = get_display_recipient(recipient)
         emails = [user_dict["email"] for user_dict in display_recipient]

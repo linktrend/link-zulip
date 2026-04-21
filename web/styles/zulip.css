@@ -612,6 +612,7 @@ body.has-overlay-scrollbar {
     }
 
     .column-right .right-sidebar {
+        box-sizing: border-box;
         padding-left: var(--right-sidebar-left-spacing);
         width: var(--right-sidebar-width);
     }
@@ -2201,6 +2202,16 @@ body:not(.spectator-view) {
 }
 
 .dropdown-list-container {
+    /* For hidden searchbox dropdowns, when the user uses a click to open
+       the dropdown, we focus this container, so that the rest of the
+       keyboard navigation has the right container. That itself doesn't
+       introduce focus-visible. But hotkeys.ts uses a programmatic click
+       which goes through the same path and invokes focus-visible.
+    */
+    &:focus-visible {
+        outline: none;
+    }
+
     .dropdown-list-viewport-padding {
         padding-top: 4px;
         padding-bottom: 4px;
@@ -2364,7 +2375,7 @@ body:not(.spectator-view) {
                 --background-color-current-selection-dropdown-item
             );
 
-            &:not(.current_user_setting):hover {
+            &:not(.highlight_value):hover {
                 background-color: transparent;
             }
         }
@@ -2386,7 +2397,7 @@ body:not(.spectator-view) {
             border-radius: 4px;
         }
 
-        &.current_user_setting {
+        &.highlight_value {
             background-color: var(
                 --background-color-current-setting-dropdown-item
             );

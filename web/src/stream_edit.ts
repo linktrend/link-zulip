@@ -113,14 +113,23 @@ export function open_stream_edit_modal(stream_id: number): void {
         max_stream_name_length: realm.max_stream_name_length,
         max_stream_description_length: realm.max_stream_description_length,
     };
+    const stream_name_with_privacy_symbol_html = render_decorated_channel_name({
+        inline_with_text: true,
+        stream,
+    });
     const change_stream_info_modal = render_change_stream_info_modal(template_data);
 
     const heading = is_archived
         ? $t_html(
-              {defaultMessage: "Edit #{channel_name} (<i>archived</i>)"},
-              {channel_name: stream.name},
+              {defaultMessage: "Edit <z-link></z-link> (<i>archived</i>)"},
+              {
+                  "z-link": () => stream_name_with_privacy_symbol_html,
+              },
           )
-        : $t_html({defaultMessage: "Edit #{channel_name}"}, {channel_name: stream.name});
+        : $t_html(
+              {defaultMessage: "Edit <z-link></z-link>"},
+              {"z-link": () => stream_name_with_privacy_symbol_html},
+          );
     dialog_widget.launch({
         modal_title_html: heading,
         modal_content_html: change_stream_info_modal,
@@ -255,6 +264,7 @@ export function update_stream_description(sub: StreamSubscription): void {
     $edit_container.find("input.description").val(sub.description);
     const html = render_stream_description({
         rendered_description: postprocess_content(sub.rendered_description),
+        use_view_only_styling: true,
     });
     $edit_container.find(".stream-description").html(html);
 }
@@ -739,6 +749,16 @@ export function initialize(): void {
         },
     );
 
+    $("body").on("click", "#channel_title_open_channel_info_modal", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const $target = $(e.currentTarget).parents(".stream-title-buttons");
+        const stream_id = Number.parseInt($target.attr("data-stream-id")!, 10);
+
+        dialog_widget.close();
+        open_stream_edit_modal(stream_id);
+    });
+
     $("body").on("click", "#change_stream_info_modal #archived_stream_rename", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1094,7 +1114,24 @@ export function initialize(): void {
         },
     );
 
-    $("#channels_overlay_container").on("click", ".create-channel-folder-button", () => {
-        channel_folders_ui.add_channel_folder();
-    });
+    // Scope to #stream_settings (the editing pane) so this handler does not
+    // fire for the sibling creation pane (#stream-creation), which has its
+    // own handler.
+    $("#channels_overlay_container").on(
+        "click",
+        "#stream_settings .create-channel-folder-button",
+        () => {
+            const active_stream_id = stream_settings_components.get_active_data().id;
+            const sub = sub_store.get(active_stream_id);
+            assert(sub !== undefined);
+            channel_folders_ui.add_channel_folder((folder_id) => {
+                settings_components.set_dropdown_list_widget_setting_value("folder_id", folder_id);
+                const $edit_container = stream_settings_containers.get_edit_container(sub);
+                settings_components.save_discard_stream_settings_widget_status_handler(
+                    $edit_container.find(".stream-settings-subsection"),
+                    sub,
+                );
+            });
+        },
+    );
 }

@@ -31,6 +31,7 @@ from zerver.lib.channel_folders import (
 from zerver.lib.compatibility import is_outdated_server
 from zerver.lib.default_streams import get_default_stream_ids_for_realm
 from zerver.lib.devices import get_devices
+from zerver.lib.event_types import RealmEmojiUpdateData
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.external_accounts import get_default_external_accounts
 from zerver.lib.i18n import get_available_language_codes
@@ -45,7 +46,6 @@ from zerver.lib.message import (
     apply_unread_message_event,
     extract_unread_data_from_um_rows,
     get_raw_unread_data,
-    get_recent_conversations_recipient_id,
     get_recent_private_conversations,
     get_starred_message_ids,
     remove_message_id_from_unread_mgs,
@@ -798,7 +798,7 @@ def fetch_initial_state_data(
                     {
                         "key": c.name,
                         "label": c.label,
-                        "validator": c.validator.__name__,
+                        "input_type": c.input_type,
                     }
                     for c in integration.url_options
                 ]
@@ -821,9 +821,9 @@ def fetch_initial_state_data(
         # to self).
         #
         # Note that raw_recent_private_conversations is an
-        # intermediate form as a dictionary keyed by recipient_id,
-        # which is more efficient to update, and is rewritten to the
-        # final format in post_process_state.
+        # intermediate form as a dictionary keyed by frozenset of
+        # other-user-ids, which is more efficient to update, and is
+        # rewritten to the final format in post_process_state.
         state["raw_recent_private_conversations"] = (
             {} if user_profile is None else get_recent_private_conversations(user_profile)
         )
@@ -942,6 +942,7 @@ def fetch_initial_state_data(
 
     if want("video_calls"):
         state["has_zoom_token"] = settings_user.third_party_api_state.get("zoom") is not None
+        state["has_webex_token"] = settings_user.third_party_api_state.get("webex") is not None
 
     if want("giphy"):
         # Normally, it would be a nasty security bug to send a
@@ -955,9 +956,12 @@ def fetch_initial_state_data(
         # abuse.
         state["giphy_api_key"] = settings.GIPHY_API_KEY or ""
 
+    # See Giphy comment above; Tenor and KLIPY API keys work similarly.
     if want("tenor"):
-        # See Giphy comment above; Tenor API keys work similarly.
         state["tenor_api_key"] = settings.TENOR_API_KEY or ""
+
+    if want("klipy"):
+        state["klipy_api_key"] = settings.KLIPY_API_KEY or ""
 
     if want("device"):
         state["devices"] = {} if user_profile is None else get_devices(user_profile)
@@ -1034,19 +1038,13 @@ def apply_event(
             if "raw_recent_private_conversations" in state:
                 # Handle maintaining the recent_private_conversations data structure.
                 conversations = state["raw_recent_private_conversations"]
-                recipient_id = get_recent_conversations_recipient_id(
-                    user_profile, event["message"]["recipient_id"], event["message"]["sender_id"]
+                userset = frozenset(
+                    user_dict["id"]
+                    for user_dict in event["message"]["display_recipient"]
+                    if user_dict["id"] != user_profile.id
                 )
 
-                if recipient_id not in conversations:
-                    conversations[recipient_id] = dict(
-                        user_ids=sorted(
-                            user_dict["id"]
-                            for user_dict in event["message"]["display_recipient"]
-                            if user_dict["id"] != user_profile.id
-                        ),
-                    )
-                conversations[recipient_id]["max_message_id"] = event["message"]["id"]
+                conversations[userset] = event["message"]["id"]
             return
 
         # Below, we handle maintaining first_message_id.
@@ -1858,7 +1856,19 @@ def apply_event(
         else:
             raise AssertionError("Unexpected event type {type}/{op}".format(**event))
     elif event["type"] == "realm_emoji":
-        state["realm_emoji"] = event["realm_emoji"]
+        if event["op"] == "update":
+            # Legacy whole-list event for clients without
+            # the individual_emoji_changes capability.
+            state["realm_emoji"] = event["realm_emoji"]
+        elif event["op"] == "add":
+            state["realm_emoji"][event["emoji"]["id"]] = event["emoji"]
+        elif event["op"] == "update_one":
+            emoji_id = event["emoji_id"]
+            for key in RealmEmojiUpdateData.model_fields:
+                if key in event["data"]:
+                    state["realm_emoji"][emoji_id][key] = event["data"][key]
+        else:
+            raise AssertionError("Unexpected event type {type}/{op}".format(**event))
     elif event["type"] == "realm_export":
         # These realm export events are only available to
         # administrators, and aren't included in page_params.
@@ -2003,6 +2013,8 @@ def apply_event(
             raise AssertionError("Unexpected event type {type}/{op}".format(**event))
     elif event["type"] == "has_zoom_token":
         state["has_zoom_token"] = event["value"]
+    elif event["type"] == "has_webex_token":
+        state["has_webex_token"] = event["value"]
     elif event["type"] == "web_reload_client":
         # This is an unlikely race, where the queue was created with a
         # previous Tornado process, which restarted, and subsequently
@@ -2063,6 +2075,7 @@ class ClientCapabilities(TypedDict):
     archived_channels: NotRequired[bool]
     empty_topic_name: NotRequired[bool]
     simplified_presence_events: NotRequired[bool]
+    individual_emoji_changes: NotRequired[bool]
     # Deprecated and no longer has any effect
     user_settings_object: NotRequired[bool]
 
@@ -2107,6 +2120,7 @@ def do_events_register(
     archived_channels = client_capabilities.get("archived_channels", False)
     empty_topic_name = client_capabilities.get("empty_topic_name", False)
     simplified_presence_events = client_capabilities.get("simplified_presence_events", False)
+    individual_emoji_changes = client_capabilities.get("individual_emoji_changes", False)
 
     if fetch_event_types is not None:
         event_types_set: set[str] | None = set(fetch_event_types)
@@ -2178,6 +2192,7 @@ def do_events_register(
         archived_channels=archived_channels,
         empty_topic_name=empty_topic_name,
         simplified_presence_events=simplified_presence_events,
+        individual_emoji_changes=individual_emoji_changes,
     )
 
     if result is None:
@@ -2282,10 +2297,8 @@ def post_process_state(
         # Reformat recent_private_conversations to be a list of dictionaries, rather than a dict.
         ret["recent_private_conversations"] = sorted(
             (
-                dict(
-                    **value,
-                )
-                for (recipient_id, value) in ret["raw_recent_private_conversations"].items()
+                {"user_ids": sorted(user_id_set), "max_message_id": value}
+                for (user_id_set, value) in ret["raw_recent_private_conversations"].items()
             ),
             key=lambda x: -x["max_message_id"],
         )

@@ -192,7 +192,7 @@ const keyboard_handling_context: messages_overlay_ui.Context = {
         if (focused_draft_id !== undefined) {
             restore_draft(focused_draft_id);
         } else {
-            const first_draft = draft_id_arrow.at(-1);
+            const first_draft = draft_id_arrow.at(0);
             assert(first_draft !== undefined);
             restore_draft(first_draft);
         }
@@ -457,7 +457,12 @@ export function launch(): void {
         !messages_overlay_ui.try_set_initial_element(restore_id, keyboard_handling_context)
     ) {
         const first_element_id = [...narrow_drafts, ...other_drafts][0]?.draft_id;
-        messages_overlay_ui.set_initial_element(first_element_id, keyboard_handling_context);
+        // Delay focus initialization until the overlay DOM is fully rendered.
+        // Otherwise, get_focused_element_id() returns undefined and the focus
+        // may not be applied.
+        setTimeout(() => {
+            messages_overlay_ui.set_initial_element(first_element_id, keyboard_handling_context);
+        }, 0);
     }
     setup_event_handlers();
     setup_bulk_actions_handlers();

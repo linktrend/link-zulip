@@ -76,7 +76,6 @@ class ClientDescriptor:
         self,
         *,
         user_profile_id: int,
-        user_recipient_id: int | None,
         realm_id: int,
         event_queue: "EventQueue",
         event_types: Sequence[str] | None,
@@ -96,6 +95,7 @@ class ClientDescriptor:
         archived_channels: bool,
         empty_topic_name: bool,
         simplified_presence_events: bool,
+        individual_emoji_changes: bool,
     ) -> None:
         # TODO: We eventually want to upstream this code to the caller, but
         # serialization concerns make it a bit difficult.
@@ -106,7 +106,6 @@ class ClientDescriptor:
         # added to load_event_queues() to update the restored objects.
         # Additionally, the to_dict and from_dict methods must be updated
         self.user_profile_id = user_profile_id
-        self.user_recipient_id = user_recipient_id
         self.realm_id = realm_id
         self.current_handler_id: int | None = None
         self.current_client_name: str | None = None
@@ -130,15 +129,18 @@ class ClientDescriptor:
         self.archived_channels = archived_channels
         self.empty_topic_name = empty_topic_name
         self.simplified_presence_events = simplified_presence_events
+        self.individual_emoji_changes = individual_emoji_changes
         self.offline = False
 
         # Default for idle_queue_timeout is DEFAULT_EVENT_QUEUE_TIMEOUT_SECS;
         # but users can set it as high as MAX_QUEUE_TIMEOUT_SECS.
         if idle_queue_timeout is None:
-            idle_queue_timeout = DEFAULT_EVENT_QUEUE_TIMEOUT_SECS
+            queue_timeout_secs = DEFAULT_EVENT_QUEUE_TIMEOUT_SECS
         elif idle_queue_timeout == "mobile":
-            idle_queue_timeout = MOBILE_EVENT_QUEUE_TIMEOUT_SECS
-        self.queue_timeout = min(idle_queue_timeout, MAX_QUEUE_TIMEOUT_SECS)
+            queue_timeout_secs = MOBILE_EVENT_QUEUE_TIMEOUT_SECS
+        else:
+            queue_timeout_secs = idle_queue_timeout
+        self.queue_timeout = min(queue_timeout_secs, MAX_QUEUE_TIMEOUT_SECS)
 
     def to_dict(self) -> dict[str, Any]:
         # If you add a new key to this dict, make sure you add appropriate
@@ -166,6 +168,7 @@ class ClientDescriptor:
             archived_channels=self.archived_channels,
             empty_topic_name=self.empty_topic_name,
             simplified_presence_events=self.simplified_presence_events,
+            individual_emoji_changes=self.individual_emoji_changes,
             offline=self.offline,
         )
 
@@ -187,7 +190,6 @@ class ClientDescriptor:
 
         ret = cls(
             user_profile_id=d["user_profile_id"],
-            user_recipient_id=d.get("user_recipient_id"),
             realm_id=d["realm_id"],
             event_queue=EventQueue.from_dict(d["event_queue"]),
             event_types=d["event_types"],
@@ -207,6 +209,7 @@ class ClientDescriptor:
             archived_channels=d.get("archived_channels", False),
             empty_topic_name=d.get("empty_topic_name", False),
             simplified_presence_events=d.get("simplified_presence_events", False),
+            individual_emoji_changes=d.get("individual_emoji_changes", False),
         )
         ret.last_connection_time = d["last_connection_time"]
         ret.offline = d.get("offline", False)
@@ -1229,7 +1232,6 @@ def process_message_event(
         client_gravatar: bool,
         allow_empty_topic_name: bool,
         can_access_sender: bool,
-        is_incoming_1_to_1: bool,
     ) -> dict[str, Any]:
         return MessageDict.finalize_payload(
             wide_dict,
@@ -1238,7 +1240,6 @@ def process_message_event(
             allow_empty_topic_name=allow_empty_topic_name,
             can_access_sender=can_access_sender,
             realm_host=realm_host,
-            is_incoming_1_to_1=is_incoming_1_to_1,
         )
 
     # Extra user-specific data to include
@@ -1321,7 +1322,6 @@ def process_message_event(
             client_gravatar=client.client_gravatar,
             allow_empty_topic_name=client.empty_topic_name,
             can_access_sender=can_access_sender,
-            is_incoming_1_to_1=wide_dict["recipient_id"] == client.user_recipient_id,
         )
 
         # Make sure mirroring bots know whether stream is invite-only
@@ -1354,6 +1354,7 @@ def process_presence_event(event: Mapping[str, Any], users: Iterable[int]) -> No
         # Any old events in our queue can just be dropped,
         # since presence events are pretty ephemeral in nature.
         logging.warning("Dropping some obsolete presence events after upgrade.")
+        return
 
     # See https://zulip.com/api/get-events#presence for more context
     # on these various event formats.
@@ -1382,6 +1383,24 @@ def process_presence_event(event: Mapping[str, Any], users: Iterable[int]) -> No
                     client.add_event(modern_event)
                 elif client.slim_presence:
                     client.add_event(slim_event)
+                else:
+                    client.add_event(legacy_event)
+
+
+def process_realm_emoji_event(event: Mapping[str, Any], users: Iterable[int]) -> None:
+    # For clients that support individual emoji changes, send the
+    # event as-is (without the legacy realm_emoji field).  For
+    # legacy clients, transform it into the old realm_emoji/update
+    # event containing the full emoji dict.
+    new_event = dict(event)
+    realm_emoji = new_event.pop("realm_emoji")
+    legacy_event = dict(type="realm_emoji", op="update", realm_emoji=realm_emoji)
+
+    for user_profile_id in users:
+        for client in get_client_descriptors_for_user(user_profile_id):
+            if client.accepts_event(event):
+                if client.individual_emoji_changes:
+                    client.add_event(new_event)
                 else:
                     client.add_event(legacy_event)
 
@@ -1804,6 +1823,8 @@ def process_notification(notice: Mapping[str, Any]) -> None:
         process_stream_creation_event(event, cast(list[int], users))
     elif event["type"] == "stream" and event["op"] == "delete":
         process_stream_deletion_event(event, cast(list[int], users))
+    elif event["type"] == "realm_emoji":
+        process_realm_emoji_event(event, cast(list[int], users))
     elif event["type"] == "cleanup_queue":
         # cleanup_event_queue may generate this event to forward cleanup
         # requests to the right shard.

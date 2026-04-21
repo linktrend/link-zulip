@@ -272,6 +272,22 @@ def do_change_realm_permission_group_setting(
         },
     )
 
+    if setting_name == "workplace_users_group":
+        RealmAuditLog.objects.create(
+            realm=realm,
+            event_type=AuditLogEventType.WORKPLACE_USERS_COUNT_CHANGED,
+            event_time=event_time,
+            acting_user=acting_user,
+            extra_data={
+                RealmAuditLog.ROLE_COUNT: realm_user_count_by_role(realm),
+                "trigger": "setting_changed",
+            },
+        )
+
+        from zerver.lib.remote_server import maybe_enqueue_audit_log_upload
+
+        maybe_enqueue_audit_log_upload(realm)
+
 
 def parse_and_set_setting_value_if_required(
     realm: Realm, setting_name: str, value: int | str, *, acting_user: UserProfile | None
@@ -763,7 +779,6 @@ def do_scrub_realm(realm: Realm, *, acting_user: UserProfile | None) -> None:
         Stream.objects.filter(realm=realm)
         .values_list("recipient_id", flat=True)
         .union(
-            UserProfile.objects.filter(realm=realm).values_list("recipient_id", flat=True),
             Subscription.objects.filter(
                 recipient__type=Recipient.DIRECT_MESSAGE_GROUP, user_profile__realm=realm
             ).values_list("recipient_id", flat=True),

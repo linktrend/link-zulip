@@ -218,6 +218,10 @@ def get_events_backend(
         Json[bool],
         ApiParamConfig(documentation_status=DocumentationStatus.INTENTIONALLY_UNDOCUMENTED),
     ] = False,
+    individual_emoji_changes: Annotated[
+        Json[bool],
+        ApiParamConfig(documentation_status=DocumentationStatus.INTENTIONALLY_UNDOCUMENTED),
+    ] = False,
 ) -> HttpResponse:
     if narrow is None:
         narrow = []
@@ -239,7 +243,6 @@ def get_events_backend(
     if queue_id is None:
         new_queue_data = dict(
             user_profile_id=user_profile.id,
-            user_recipient_id=user_profile.recipient_id,
             realm_id=user_profile.realm_id,
             event_types=event_types,
             client_type_name=valid_user_client_name,
@@ -259,6 +262,7 @@ def get_events_backend(
             archived_channels=archived_channels,
             empty_topic_name=empty_topic_name,
             simplified_presence_events=simplified_presence_events,
+            individual_emoji_changes=individual_emoji_changes,
         )
 
     result = in_tornado_thread(fetch_events)(
